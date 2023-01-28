@@ -289,6 +289,7 @@ document.addEventListener("keydown", function(event) {
 			tiles = [];
 			break;
 		case ' ':
+			event.preventDefault();
 			erase = (erase == true) ? false : true;
 			break;
 		case '1':
