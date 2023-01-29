@@ -4,11 +4,19 @@ const c = canvas.getContext('2d');
 canvas.width = 1300;
 canvas.height = 700;
 
-const tileSize = 20;
+const tileSize = 10;
 const expirationTime = canvas.width / tileSize;
 let mouseDown = false;
 let erase = false;
-let frame = 0;
+let frames = 0;
+let fps = 60;
+let startTime;
+
+let running = true;
+let intervalId;
+const fpsInterval = 1000;
+
+let debugDrawInactive = false;
 
 const origin = {
 	x: 0,
@@ -54,12 +62,14 @@ class Tile {
 		this.active = (this.useGravity == true) ? expirationTime : 0;
 	}
 
-	drawTiles() {
+	drawTile() {
 
 		if (this.useGravity && this.active)
 			this.update();
 
 		c.fillStyle = `rgba(${this.color.r}, ${this.color.g}, ${this.color.b}, ${this.color.a})`;
+		if (!this.active && this.useGravity && debugDrawInactive)
+			c.fillStyle = 'red'; //draw inactive tiles as red
 		c.fillRect(this.position.x, this.position.y, tileSize, tileSize);
 	}
 
@@ -184,7 +194,11 @@ class Tile {
 let tiles = [];
 
 function animate() {
-	window.requestAnimationFrame(animate);
+
+	if (!running) return;
+
+	frames++;
+
 	c.fillStyle = 'white';
 	c.fillRect(0, 0, canvas.width, canvas.height);
 
@@ -193,7 +207,7 @@ function animate() {
 
 	// Draw tiles
 	for (let i = 0; i < tiles.length; i++) {
-		tiles[i].drawTiles();
+		tiles[i].drawTile();
 	}
 
 	// Select crosshair color
@@ -209,6 +223,10 @@ function animate() {
 
 	c.font = "16px Arial";
 	c.fillStyle = 'black';
+	c.fillText("FPS: " + fps, 1234, 20);
+	if (debugDrawInactive)
+		c.fillText("Debug ON", 1217, 40);
+
 	if (erase) {
 		c.fillStyle = 'red';
 		c.fillText("Erase", 10, 20);
@@ -216,8 +234,18 @@ function animate() {
 		c.fillText("Brush: " + tileType.name, 10, 20);
 	}
 
-	frame++;
-	if (frame == 2) frame = 0;
+	window.requestAnimationFrame(animate);
+
+}
+
+function updateFPS() {
+
+	const timeElapsed = performance.now() - startTime;
+	fps = Math.floor(frames / (timeElapsed / fpsInterval));
+	frames = 0;
+
+	startTime = performance.now();
+
 }
 
 function addTile() {
@@ -244,7 +272,7 @@ function addTiles() {
 	if (mouseDown) {
 		if (tileIndex == -1 && erase == false) {
 
-			if (!tileType.useGravity || (tileType.useGravity == true && frame == 0)) addTile();
+			addTile();
 
 		} else if (tileIndex >= 0 && erase == false) { // there is already a tile in the cursors location and we are adding tiles
 
@@ -254,11 +282,11 @@ function addTiles() {
 				addTile();
 
 			}
-		}
+		} else if (tileIndex >= 0 && erase == true) {
 
-		if (tileIndex >= 0 && erase == true) {
 			tiles.splice(tileIndex, 1);
 			for(let i = 0; i < tiles.length; i++) tiles[i].active = expirationTime;
+
 		}
 	}
 }
@@ -269,26 +297,29 @@ document.addEventListener("keydown", function(event) {
 	let gravY = gravity.y;
 
 	switch (event.key) {
-		case 'w':
+		case 'w': // gravity up
 			gravity.x = 0;
 			gravity.y = -1;
 			break;
-		case 'a':
+		case 'a': // gravity left
 			gravity.x = -1;
 			gravity.y = 0;
 			break;
-		case 's':
+		case 's': // gravity down
 			gravity.x = 0;
 			gravity.y = 1;
 			break;
-		case 'd':
+		case 'd': // gravity right
 			gravity.x = 1;
 			gravity.y = 0;
 			break;
-		case 'r':
+		case 'r': // delete all tiles
 			tiles = [];
 			break;
-		case ' ':
+		case 'z': // debug: toggle inactive tile drawing
+			debugDrawInactive = (debugDrawInactive == true) ? false : true;
+			break;
+		case ' ': // toggle between brush and eraser
 			event.preventDefault();
 			erase = (erase == true) ? false : true;
 			break;
@@ -325,4 +356,17 @@ canvas.addEventListener("mouseup", function(event) {
 	mouseDown = false;
 });
 
-animate();
+window.addEventListener("blur", function() {
+  running = false;
+  clearInterval(intervalId);
+});
+
+window.addEventListener("focus", function() {
+	running = true;
+	frames = 0;
+	startTime = performance.now();
+	intervalId = setInterval(() => {
+		updateFPS();
+	}, fpsInterval);
+	animate();
+});
