@@ -5,7 +5,10 @@ canvas.width = 1300;
 canvas.height = 700;
 
 const tileSize = 10;
+let brushSize = 0;
+
 const expirationTime = canvas.width / tileSize;
+const maxLifeSpan = 20;
 let mouseDown = false;
 let erase = false;
 let frames = 0;
@@ -33,21 +36,40 @@ const tileTypes = {
 		name: "Grass",
 		useGravity: true,
 		color: {r: 0, g: 128, b: 0, a:1},
-		slip: 1
+		slip: 1,
+		lifeSpan: 0,
+		isFlammable: true,
+		killsFlame: false,
 	},
 
 	sand: {
 		name: "Sand",
 		useGravity: true,
 		color: {r: 245, g: 185, b: 95, a:1},
-		slip: 3
+		slip: 3,
+		lifeSpan: 0,
+		isFlammable: false,
+		killsFlame: true,
 	},
 
 	block: {
 		name: "Block",
 		useGravity: false,
 		color: {r: 50, g: 50, b: 50, a:1},
-		slip: 0
+		slip: 0,
+		lifeSpan: 0,
+		isFlammable: false,
+		killsFlame: false,
+	},
+
+	fire: {
+		name: "Fire",
+		useGravity: false,
+		color: {r: 245, g: 123, b: 0, a:1},
+		slip: 0,
+		lifeSpan: maxLifeSpan,
+		isFlammable: true,
+		killsFlame: false,
 	}
 };
 
@@ -55,138 +77,234 @@ let tileType = tileTypes.grass;
 
 class Tile {
 	constructor(options) {
+		this.name = options.name;
 		this.position = options.position;
 		this.color = options.color;
 		this.useGravity = options.useGravity;
 		this.slip = options.slip;
 		this.active = (this.useGravity == true) ? expirationTime : 0;
+		this.lifeSpan = options.lifeSpan;
+		this.isFlammable = options.isFlammable;
+		this.killsFlame = options.killsFlame;
 	}
 
 	drawTile() {
 
-		if (this.useGravity && this.active)
+		if (this.lifeSpan || (this.useGravity && this.active))
 			this.update();
 
 		c.fillStyle = `rgba(${this.color.r}, ${this.color.g}, ${this.color.b}, ${this.color.a})`;
 		if (!this.active && this.useGravity && debugDrawInactive)
 			c.fillStyle = 'red'; //draw inactive tiles as red
+
 		c.fillRect(this.position.x, this.position.y, tileSize, tileSize);
 	}
 
 	update() {
 
-		let posX = this.position.x;
-		let posY = this.position.y;
+		if (this.lifeSpan) {
 
-		// if current tile detects a tile below it
-		if (tiles.findIndex(object => (object.position.x == this.position.x + gravity.x * tileSize)
-            					   && (object.position.y == this.position.y + gravity.y * tileSize)) >= 0) {
+			let randomX;
+			let randomY;
 
-			let positions = {
-				x: (gravity.x == 0) ? this.position.x : this.position.y,
-				y: (gravity.x == 0) ? this.position.y : this.position.x,
-				maxX: ((gravity.x == 0) ? canvas.width : canvas.height) - tileSize,
-				maxY: ((gravity.x == 0) ? canvas.height : canvas.width) - tileSize,
-				gravity: (gravity.x == 0) ? gravity.y : gravity.x,
+			if (gravity.x) {
+				randomX = -gravity.x * Math.sign(Math.floor(Math.random() * 6 - 1));
+				randomY = Math.floor(Math.random() * 3 - 1);
 			}
 
-			let currentTile;
-			let tile1 = this.slip + 1;
-			let tile2 = this.slip + 1;
-			let total = this.slip + 1;
+			if (gravity.y) {
+				randomX = Math.floor(Math.random() * 3 - 1);
+				randomY = -gravity.y * Math.sign(Math.floor(Math.random() * 6 - 1));
+			}
 
-			for (let i = Math.max(0, positions.x - this.slip * tileSize); i <= Math.min(positions.maxX, positions.x + this.slip * tileSize); i += tileSize) {
+			let myTileIndex = tiles.findIndex(object => (object.position.x == this.position.x) && (object.position.y == this.position.y));
 
-				total--;
+			if (randomX || randomY) {
 
-				if (i == positions.x) continue;
-				if (total == 0) total--;
+				let newPositionX = Math.max(0, Math.min(canvas.width - tileSize, this.position.x + randomX * tileSize));
+				let newPositionY = Math.max(0, Math.min(canvas.height - tileSize, this.position.y + randomY * tileSize));
 
-				if (gravity.x == 0) {
-					currentTile = tiles.findIndex(object => (object.position.x == i) && (object.position.y == Math.max(0, Math.min(positions.maxY, positions.y + positions.gravity * tileSize))));
-				} else if (gravity.y == 0) {
-					currentTile = tiles.findIndex(object => (object.position.y == i) && (object.position.x == Math.max(0, Math.min(positions.maxY, positions.y + positions.gravity * tileSize))));
-				}
+				let tileIndex = tiles.findIndex(object => (object.position.x == newPositionX) && (object.position.y == newPositionY));
 
-				if (currentTile == -1) {
-					if (total > 0) {
-						tile1 = total;
-					} else if (total < 0) {
-						tile2 = Math.abs(total);
-						break;
+				if (tileIndex >= 0) {
+
+					if (tiles[tileIndex].killsFlame) {
+
+						tiles.splice(myTileIndex, 1);
+
+					} else if (tiles[tileIndex].isFlammable) {
+
+						let tileName = tiles[tileIndex].name;
+
+						tiles.splice(tileIndex, 1);
+
+						if (tileName != "Fire") {
+
+							tiles.push(new Tile({
+
+								name: "Fire",
+
+								position: {
+									x: newPositionX,
+									y: newPositionY
+								},
+
+								color: this.color,
+								useGravity: this.useGravity,
+								slip: this.slip,
+								lifeSpan: maxLifeSpan,
+								isFlammable: true,
+								killsFlame: false,
+
+							}));
+
+						}
 					}
-				}
-			}
 
-			let direction = 0;
-			if (tile1 <= this.slip || tile2 <= this.slip) {
-				if (tile1 == tile2) {
-					direction = Math.round(Math.random()) * 2 - 1;
 				} else {
-					if (tile1 < tile2) direction = -1;
-					if (tile2 < tile1) direction = 1;
-				}
 
-				let emptyTile = false;
+					tiles.push(new Tile({
 
-				if (gravity.x == 0) 
-					emptyTile = tiles.findIndex(object => (object.position.x == this.position.x + direction * tileSize) && (object.position.y == this.position.y)) == -1;
-				if (gravity.y == 0)
-					emptyTile = tiles.findIndex(object => (object.position.x == this.position.x) && (object.position.y == this.position.y + direction * tileSize)) == -1;
+						name: "Fire",
 
-				if (emptyTile) {
+						position: {
+							x: newPositionX,
+							y: newPositionY
+						},
 
-					let floorTile = -1;
-					let leftTile = -1;
-					let rightTile = -1;
+						color: this.color,
+						useGravity: this.useGravity,
+						slip: this.slip,
+						lifeSpan: Math.max(1,this.lifeSpan - 1),
+						isFlammable: true,
+						killsFlame: false,
 
-					if (gravity.x == 0) {
-
-						floorTile = tiles.findIndex(object => (object.position.x == this.position.x) && (object.position.y == this.position.y + gravity.y * tileSize));
-						leftTile = tiles.findIndex(object => (object.position.x == this.position.x - tileSize) && (object.position.y == this.position.y));
-						rightTile = tiles.findIndex(object => (object.position.x == this.position.x + tileSize) && (object.position.y == this.position.y));
-
-						this.position.x = Math.max(0, Math.min(canvas.width - tileSize, this.position.x + direction * tileSize));
-					}
-					if (gravity.y == 0) {
-
-						floorTile = tiles.findIndex(object => (object.position.x == this.position.x + gravity.x * tileSize) && (object.position.y == this.position.y));
-						
-						leftTile = tiles.findIndex(object => (object.position.x == this.position.x) && (object.position.y == this.position.y - tileSize));
-						rightTile = tiles.findIndex(object => (object.position.x == this.position.x) && (object.position.y == this.position.y + tileSize));
-
-						this.position.y = Math.max(0, Math.min(canvas.height - tileSize, this.position.y + direction * tileSize));
-
-					}
-
-					if (floorTile >= 0)
-						tiles[floorTile].active = expirationTime;
-					if (leftTile >= 0)
-						tiles[leftTile].active = expirationTime;
-					if (rightTile >= 0)
-						tiles[rightTile].active = expirationTime;
-
-					if (tiles.findIndex(object => (object.position.x == this.position.x + gravity.x * tileSize)
-	            					   	       && (object.position.y == this.position.y + gravity.y * tileSize)) == -1) {
-
-						this.position.x = Math.max(0, Math.min(canvas.width - tileSize, this.position.x + gravity.x * tileSize));
-						this.position.y = Math.max(0, Math.min(canvas.height - tileSize, this.position.y + gravity.y * tileSize));
-
-					}
+					}));
 
 				}
 			}
+
+			myTileIndex = tiles.findIndex(object => (object.position.x == this.position.x) && (object.position.y == this.position.y));
+
+			this.lifeSpan--;
+
+			if (!this.lifeSpan) tiles.splice(myTileIndex, 1);
 
 		} else {
 
-			this.position.x = Math.max(0, Math.min(canvas.width - tileSize, this.position.x + gravity.x * tileSize));
-			this.position.y = Math.max(0, Math.min(canvas.height - tileSize, this.position.y + gravity.y * tileSize));
+			let posX = this.position.x;
+			let posY = this.position.y;
 
+			// if current tile detects a tile below it
+			if (tiles.findIndex(object => (object.position.x == this.position.x + gravity.x * tileSize)
+	            					   && (object.position.y == this.position.y + gravity.y * tileSize)) >= 0) {
+
+				let positions = {
+					x: (gravity.x == 0) ? this.position.x : this.position.y,
+					y: (gravity.x == 0) ? this.position.y : this.position.x,
+					maxX: ((gravity.x == 0) ? canvas.width : canvas.height) - tileSize,
+					maxY: ((gravity.x == 0) ? canvas.height : canvas.width) - tileSize,
+					gravity: (gravity.x == 0) ? gravity.y : gravity.x,
+				}
+
+				let currentTile;
+				let tile1 = this.slip + 1;
+				let tile2 = this.slip + 1;
+				let total = this.slip + 1;
+
+				for (let i = Math.max(0, positions.x - this.slip * tileSize); i <= Math.min(positions.maxX, positions.x + this.slip * tileSize); i += tileSize) {
+
+					total--;
+
+					if (i == positions.x) continue;
+					if (total == 0) total--;
+
+					if (gravity.x == 0) {
+						currentTile = tiles.findIndex(object => (object.position.x == i) && (object.position.y == Math.max(0, Math.min(positions.maxY, positions.y + positions.gravity * tileSize))));
+					} else if (gravity.y == 0) {
+						currentTile = tiles.findIndex(object => (object.position.y == i) && (object.position.x == Math.max(0, Math.min(positions.maxY, positions.y + positions.gravity * tileSize))));
+					}
+
+					if (currentTile == -1) {
+						if (total > 0) {
+							tile1 = total;
+						} else if (total < 0) {
+							tile2 = Math.abs(total);
+							break;
+						}
+					}
+				}
+
+				let direction = 0;
+				if (tile1 <= this.slip || tile2 <= this.slip) {
+					if (tile1 == tile2) {
+						direction = Math.round(Math.random()) * 2 - 1;
+					} else {
+						if (tile1 < tile2) direction = -1;
+						if (tile2 < tile1) direction = 1;
+					}
+
+					let emptyTile = false;
+
+					if (gravity.x == 0) 
+						emptyTile = tiles.findIndex(object => (object.position.x == this.position.x + direction * tileSize) && (object.position.y == this.position.y)) == -1;
+					if (gravity.y == 0)
+						emptyTile = tiles.findIndex(object => (object.position.x == this.position.x) && (object.position.y == this.position.y + direction * tileSize)) == -1;
+
+					if (emptyTile) {
+
+						let floorTile = -1;
+						let leftTile = -1;
+						let rightTile = -1;
+
+						if (gravity.x == 0) {
+
+							floorTile = tiles.findIndex(object => (object.position.x == this.position.x) && (object.position.y == this.position.y + gravity.y * tileSize));
+							leftTile = tiles.findIndex(object => (object.position.x == this.position.x - tileSize) && (object.position.y == this.position.y));
+							rightTile = tiles.findIndex(object => (object.position.x == this.position.x + tileSize) && (object.position.y == this.position.y));
+
+							this.position.x = Math.max(0, Math.min(canvas.width - tileSize, this.position.x + direction * tileSize));
+						}
+						if (gravity.y == 0) {
+
+							floorTile = tiles.findIndex(object => (object.position.x == this.position.x + gravity.x * tileSize) && (object.position.y == this.position.y));
+							
+							leftTile = tiles.findIndex(object => (object.position.x == this.position.x) && (object.position.y == this.position.y - tileSize));
+							rightTile = tiles.findIndex(object => (object.position.x == this.position.x) && (object.position.y == this.position.y + tileSize));
+
+							this.position.y = Math.max(0, Math.min(canvas.height - tileSize, this.position.y + direction * tileSize));
+
+						}
+
+						if (floorTile >= 0)
+							tiles[floorTile].active = expirationTime;
+						if (leftTile >= 0)
+							tiles[leftTile].active = expirationTime;
+						if (rightTile >= 0)
+							tiles[rightTile].active = expirationTime;
+
+						if (tiles.findIndex(object => (object.position.x == this.position.x + gravity.x * tileSize)
+		            					   	       && (object.position.y == this.position.y + gravity.y * tileSize)) == -1) {
+
+							this.position.x = Math.max(0, Math.min(canvas.width - tileSize, this.position.x + gravity.x * tileSize));
+							this.position.y = Math.max(0, Math.min(canvas.height - tileSize, this.position.y + gravity.y * tileSize));
+
+						}
+
+					}
+				}
+
+			} else {
+
+				this.position.x = Math.max(0, Math.min(canvas.width - tileSize, this.position.x + gravity.x * tileSize));
+				this.position.y = Math.max(0, Math.min(canvas.height - tileSize, this.position.y + gravity.y * tileSize));
+
+			}
+
+			this.active = Math.max(0, this.active - 1);
+
+			if (!(this.position.x == posX && this.position.y == posY)) this.active = expirationTime;
 		}
-
-		this.active = Math.max(0, this.active - 1);
-
-		if (!(this.position.x == posX && this.position.y == posY)) this.active = expirationTime;
 
 	}
 }
@@ -228,11 +346,12 @@ function animate() {
 		c.fillText("Debug ON", 1217, 40);
 
 	if (erase) {
-		c.fillStyle = 'red';
-		c.fillText("Erase", 10, 20);
+		c.fillText("Eraser", 10, 20);
 	} else {
 		c.fillText("Brush: " + tileType.name, 10, 20);
 	}
+
+	c.fillText("Brush Size: " + (brushSize * 2 + 1) + "x" + (brushSize * 2 + 1), 10, 40);
 
 	window.requestAnimationFrame(animate);
 
@@ -249,43 +368,85 @@ function updateFPS() {
 }
 
 function addTile() {
-	tiles.push(new Tile({
 
-		position: {
-			x: Math.floor(origin.x / tileSize) * tileSize,
-			y: Math.floor(origin.y / tileSize) * tileSize
-		},
+	// add a certain number of tiles based on brushSize
+	// brushSize of 0 means 1 tile (1x1)
+	// brushSize of 1 means 9 tiles (3x3)
+	// etc
 
-		color: tileType.color,
-		useGravity: tileType.useGravity,
-		slip: tileType.slip
+	let tileIndex;
 
-	}));
+	for (let i = Math.max(0, Math.floor(origin.x / tileSize) * tileSize - tileSize * brushSize); i <= Math.min(canvas.width - tileSize, Math.floor(origin.x / tileSize) * tileSize + tileSize * brushSize); i += tileSize) {
+		for (let j = Math.max(0, Math.floor(origin.y / tileSize) * tileSize - tileSize * brushSize); j <= Math.min(canvas.height - tileSize, Math.floor(origin.y / tileSize) * tileSize + tileSize * brushSize); j += tileSize) {
+		
+			tileIndex = tiles.findIndex(object => (object.position.x == i) && (object.position.y == j));
+
+			if (erase == true && tileIndex >= 0) {
+
+				tiles.splice(tileIndex, 1);
+
+			} else if (erase == false) {
+
+				let flag = true;
+
+				if (tileIndex >= 0) {
+					flag = false;
+					if ((tiles[tileIndex].name != "Block" && tileType.name == "Block") || (!tiles[tileIndex].killsFlame && tiles[tileIndex].name != "Block" && tileType.name == "Fire")) {
+						flag = true;
+						tiles.splice(tileIndex, 1);
+					}
+				}
+
+				if (flag) {
+
+					tiles.push(new Tile({
+
+						name: tileType.name,
+
+						position: {
+							x: i,
+							y: j
+						},
+
+						color: tileType.color,
+						useGravity: tileType.useGravity,
+						slip: tileType.slip,
+						lifeSpan: tileType.lifeSpan,
+						isFlammable: tileType.isFlammable,
+						killsFlame: tileType.killsFlame,
+
+					}));
+
+				}
+
+			}
+
+		}
+	}
+	
 }
 
 function addTiles() {
-	//get tile index of current origin point
-	let tileIndex = tiles.findIndex(object => (object.position.x == Math.floor(origin.x / tileSize) * tileSize)
-										   && (object.position.y == Math.floor(origin.y / tileSize) * tileSize));
 
 	// Decide whether we should add or remove tiles		
 	if (mouseDown) {
-		if (tileIndex == -1 && erase == false) {
 
-			addTile();
+		addTile();
 
-		} else if (tileIndex >= 0 && erase == false) { // there is already a tile in the cursors location and we are adding tiles
+		if (erase) {
 
-			if (tiles[tileIndex].useGravity == true && tileType.useGravity == false){ // overwrites gravity particle with non-gravity particle
+			let limitX = Math.max(0, Math.min(canvas.width - tileSize, Math.floor(origin.x / tileSize) * tileSize + gravity.x * (tileSize * brushSize)));
+			let limitY = Math.max(0, Math.min(canvas.height - tileSize, Math.floor(origin.y / tileSize) * tileSize + gravity.y * (tileSize * brushSize)));
 
-				tiles.splice(tileIndex, 1);
-				addTile();
+			for(let i = 0; i < tiles.length; i++) {
 
+				if ((gravity.x == -1 && tiles[i].position.x >= limitX) || (gravity.x == 1 && tiles[i].position.x <= limitX)
+						|| (gravity.y == -1 && tiles[i].position.y >= limitY) || (gravity.y == 1 && tiles[i].position.y <= limitY)) {
+					
+					tiles[i].active = expirationTime;
+
+				}
 			}
-		} else if (tileIndex >= 0 && erase == true) {
-
-			tiles.splice(tileIndex, 1);
-			for(let i = 0; i < tiles.length; i++) tiles[i].active = expirationTime;
 
 		}
 	}
@@ -335,8 +496,20 @@ document.addEventListener("keydown", function(event) {
 			erase = false;
 			tileType = tileTypes.block;
 			break;
+		case '4':
+			erase = false;
+			tileType = tileTypes.fire;
+			break;
+
+		case '-':
+			brushSize = Math.max(0, brushSize - 1);
+			break;
+		case '=':
+			brushSize = Math.min(2, brushSize + 1);
+			break;
 	}
 
+	// if gravity changed, make all tiles active again
 	if (!(gravX == gravity.x && gravY == gravity.y))
 		for(let i = 0; i < tiles.length; i++) tiles[i].active = expirationTime;
 });

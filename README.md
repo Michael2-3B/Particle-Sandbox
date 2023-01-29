@@ -7,6 +7,8 @@ Allows you to control gravity direction as well.
 * Spacebar: Toggle Between Brush and Eraser
 * W, A, S, D: Change Gravity Direction
 * 1-9: Pick Tile Type
-* Z: Toggle Debug Mode (Draws inactive tiles as red)
+* +, -: Increase / Decrease Brush Size
+* R: Reset / Delete All Tiles
+* Z: Toggle Debug Mode (draws inactive tiles as red)
 
 https://michael2-3b.github.io/Particle-Sandbox
