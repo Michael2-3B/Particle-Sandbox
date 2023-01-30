@@ -9,6 +9,6 @@ Allows you to control gravity direction as well.
 * 1-9: Pick Tile Type
 * +, -: Increase / Decrease Brush Size
 * R: Reset / Delete All Tiles
-* Z: Toggle Debug Mode (draws inactive tiles as red)
+* Z: Toggle Debug Mode (inactive tiles are colored red)
 
 https://michael2-3b.github.io/Particle-Sandbox

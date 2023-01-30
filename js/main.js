@@ -3,23 +3,22 @@ const c = canvas.getContext('2d');
 
 canvas.width = 1300;
 canvas.height = 700;
-
-const tileSize = 10;
-let brushSize = 0;
-
-const expirationTime = canvas.width / tileSize;
-const maxLifeSpan = 20;
-let mouseDown = false;
-let erase = false;
+ 
+let running = true;
+let intervalId;
+const fpsInterval = 1000;
 let frames = 0;
 let fps = 60;
 let startTime;
 
-let running = true;
-let intervalId;
-const fpsInterval = 1000;
+const tileSize = 10;
+let brushSize = 0;
+const maxBrushSize = 3;
 
-let debugDrawInactive = false;
+const expirationTime = canvas.width / tileSize;
+let mouseDown = false;
+let erase = false;
+let debugMode = false;
 
 const origin = {
 	x: 0,
@@ -37,7 +36,7 @@ const tileTypes = {
 		useGravity: true,
 		color: {r: 0, g: 128, b: 0, a:1},
 		slip: 1,
-		lifeSpan: 0,
+		lifeSpan: -1,
 		isFlammable: true,
 		killsFlame: false,
 	},
@@ -47,17 +46,17 @@ const tileTypes = {
 		useGravity: true,
 		color: {r: 245, g: 185, b: 95, a:1},
 		slip: 3,
-		lifeSpan: 0,
+		lifeSpan: -1,
 		isFlammable: false,
 		killsFlame: true,
 	},
 
 	block: {
-		name: "Block",
+		name: "Stone",
 		useGravity: false,
-		color: {r: 50, g: 50, b: 50, a:1},
+		color: {r: 90, g: 90, b: 100, a:1},
 		slip: 0,
-		lifeSpan: 0,
+		lifeSpan: -1,
 		isFlammable: false,
 		killsFlame: false,
 	},
@@ -67,42 +66,51 @@ const tileTypes = {
 		useGravity: false,
 		color: {r: 245, g: 123, b: 0, a:1},
 		slip: 0,
-		lifeSpan: maxLifeSpan,
+		lifeSpan: 20,
 		isFlammable: true,
 		killsFlame: false,
-	}
+	},
 };
 
 let tileType = tileTypes.grass;
 
 class Tile {
 	constructor(options) {
+
 		this.name = options.name;
-		this.position = options.position;
 		this.color = options.color;
-		this.useGravity = options.useGravity;
-		this.slip = options.slip;
-		this.active = (this.useGravity == true) ? expirationTime : 0;
 		this.lifeSpan = options.lifeSpan;
+
+		this.position = options.position;
+		this.velocity = options.velocity;
+		this.slip = options.slip;
+
+		this.useGravity = options.useGravity;
 		this.isFlammable = options.isFlammable;
 		this.killsFlame = options.killsFlame;
+
+		this.active = (this.useGravity == true) ? expirationTime : 0;
+
 	}
 
 	drawTile() {
 
-		if (this.lifeSpan || (this.useGravity && this.active))
+		if (this.lifeSpan > 0 || this.active)
 			this.update();
 
 		c.fillStyle = `rgba(${this.color.r}, ${this.color.g}, ${this.color.b}, ${this.color.a})`;
-		if (!this.active && this.useGravity && debugDrawInactive)
+		if (!this.active && this.useGravity && debugMode)
 			c.fillStyle = 'red'; //draw inactive tiles as red
 
 		c.fillRect(this.position.x, this.position.y, tileSize, tileSize);
+
 	}
 
 	update() {
 
-		if (this.lifeSpan) {
+		if (this.lifeSpan > 0) {
+
+			// randomly moves fire particle with a bias upwards (opposite of gravity)
 
 			let randomX;
 			let randomY;
@@ -117,20 +125,19 @@ class Tile {
 				randomY = -gravity.y * Math.sign(Math.floor(Math.random() * 6 - 1));
 			}
 
-			let myTileIndex = tiles.findIndex(object => (object.position.x == this.position.x) && (object.position.y == this.position.y));
-
 			if (randomX || randomY) {
 
 				let newPositionX = Math.max(0, Math.min(canvas.width - tileSize, this.position.x + randomX * tileSize));
 				let newPositionY = Math.max(0, Math.min(canvas.height - tileSize, this.position.y + randomY * tileSize));
-
-				let tileIndex = tiles.findIndex(object => (object.position.x == newPositionX) && (object.position.y == newPositionY));
+				let tileIndex = findTileIndex(newPositionX, newPositionY);
 
 				if (tileIndex >= 0) {
 
+					//if there is another tile at the random new position
+
 					if (tiles[tileIndex].killsFlame) {
 
-						tiles.splice(myTileIndex, 1);
+						tiles.splice(findTileIndex(this.position.x, this.position.y), 1);
 
 					} else if (tiles[tileIndex].isFlammable) {
 
@@ -138,175 +145,237 @@ class Tile {
 
 						tiles.splice(tileIndex, 1);
 
+						// dont add fire where we just had fire
 						if (tileName != "Fire") {
 
-							tiles.push(new Tile({
-
-								name: "Fire",
-
+							pushTile({
+								tile: tileTypes.fire,
 								position: {
 									x: newPositionX,
 									y: newPositionY
 								},
-
-								color: this.color,
-								useGravity: this.useGravity,
-								slip: this.slip,
-								lifeSpan: maxLifeSpan,
-								isFlammable: true,
-								killsFlame: false,
-
-							}));
+								lifeSpan: tileTypes.fire.lifeSpan,
+							});
 
 						}
+
+						let limitX = Math.max(0, Math.min(canvas.width - tileSize, Math.floor(origin.x / tileSize) * tileSize + gravity.x * (tileSize * brushSize)));
+						let limitY = Math.max(0, Math.min(canvas.height - tileSize, Math.floor(origin.y / tileSize) * tileSize + gravity.y * (tileSize * brushSize)));
+
+						for(let i = 0; i < tiles.length; i++) {
+
+							if (!tiles[i].useGravity) continue;
+
+							if ((gravity.x == -1 && tiles[i].position.x >= limitX) || (gravity.x == 1 && tiles[i].position.x <= limitX)
+									|| (gravity.y == -1 && tiles[i].position.y >= limitY) || (gravity.y == 1 && tiles[i].position.y <= limitY)) {
+								
+								tiles[i].active = expirationTime;
+
+							}
+						}
+
 					}
 
 				} else {
 
-					tiles.push(new Tile({
+					// there is no tile at the random new position, but we will add a fire particle into the air here
 
-						name: "Fire",
-
+					pushTile({
+						tile: tileTypes.fire,
 						position: {
 							x: newPositionX,
 							y: newPositionY
 						},
-
-						color: this.color,
-						useGravity: this.useGravity,
-						slip: this.slip,
-						lifeSpan: Math.max(1,this.lifeSpan - 1),
-						isFlammable: true,
-						killsFlame: false,
-
-					}));
+						lifeSpan: Math.max(1, this.lifeSpan -1),
+					});
 
 				}
 			}
 
-			myTileIndex = tiles.findIndex(object => (object.position.x == this.position.x) && (object.position.y == this.position.y));
-
 			this.lifeSpan--;
 
-			if (!this.lifeSpan) tiles.splice(myTileIndex, 1);
+			if (!this.lifeSpan) tiles.splice(findTileIndex(this.position.x, this.position.y), 1);
 
 		} else {
 
-			let posX = this.position.x;
-			let posY = this.position.y;
+			let thisX = this.position.x;
+			let thisY = this.position.y;
 
-			// if current tile detects a tile below it
-			if (tiles.findIndex(object => (object.position.x == this.position.x + gravity.x * tileSize)
-	            					   && (object.position.y == this.position.y + gravity.y * tileSize)) >= 0) {
+			let tileLeft = {x: thisX - gravity.y * tileSize, y: thisY + gravity.x * tileSize};
+			if (tileLeft.x < 0 || tileLeft.x >= canvas.width || tileLeft.y < 0 || tileLeft.y >= canvas.height){
+				tileLeft = -2;
+			} else {
+				tileLeft = findTileIndex(tileLeft.x, tileLeft.y);
+			}
 
-				let positions = {
-					x: (gravity.x == 0) ? this.position.x : this.position.y,
-					y: (gravity.x == 0) ? this.position.y : this.position.x,
-					maxX: ((gravity.x == 0) ? canvas.width : canvas.height) - tileSize,
-					maxY: ((gravity.x == 0) ? canvas.height : canvas.width) - tileSize,
-					gravity: (gravity.x == 0) ? gravity.y : gravity.x,
-				}
+			let tileRight = {x: thisX + gravity.y * tileSize, y: thisY - gravity.x * tileSize};
+			if (tileRight.x < 0 || tileRight.x >= canvas.width || tileRight.y < 0 || tileRight.y >= canvas.height){
+				tileRight = -2;
+			} else {
+				tileRight = findTileIndex(tileRight.x, tileRight.y);
+			}
 
-				let currentTile;
-				let tile1 = this.slip + 1;
-				let tile2 = this.slip + 1;
-				let total = this.slip + 1;
+			let tileFloor = {x: thisX + gravity.x * tileSize, y: thisY + gravity.y * tileSize};
+			if (tileFloor.x < 0 || tileFloor.x >= canvas.width || tileFloor.y < 0 || tileFloor.y >= canvas.height) {
+				tileFloor = -2;
+			} else {
+				tileFloor = findTileIndex(tileFloor.x, tileFloor.y);
+			}
 
-				for (let i = Math.max(0, positions.x - this.slip * tileSize); i <= Math.min(positions.maxX, positions.x + this.slip * tileSize); i += tileSize) {
+			// if current tile is on the ground
+			if (tileFloor != -1) {
 
-					total--;
+				// cancel downward velocity
+				if (gravity.x) this.velocity.x = 0;
+				if (gravity.y) this.velocity.y = 0;
 
-					if (i == positions.x) continue;
-					if (total == 0) total--;
+				// current tile is on top of another tile
+				if (tileFloor >= 0) {
 
-					if (gravity.x == 0) {
-						currentTile = tiles.findIndex(object => (object.position.x == i) && (object.position.y == Math.max(0, Math.min(positions.maxY, positions.y + positions.gravity * tileSize))));
-					} else if (gravity.y == 0) {
-						currentTile = tiles.findIndex(object => (object.position.y == i) && (object.position.x == Math.max(0, Math.min(positions.maxY, positions.y + positions.gravity * tileSize))));
-					}
-
-					if (currentTile == -1) {
-						if (total > 0) {
-							tile1 = total;
-						} else if (total < 0) {
-							tile2 = Math.abs(total);
-							break;
-						}
-					}
-				}
-
-				let direction = 0;
-				if (tile1 <= this.slip || tile2 <= this.slip) {
-					if (tile1 == tile2) {
-						direction = Math.round(Math.random()) * 2 - 1;
+					let tileLeftDown = {x: thisX - (gravity.y - gravity.x) * tileSize, y: thisY + (gravity.x + gravity.y) * tileSize};
+					if (tileLeftDown.x < 0 || tileLeftDown.x >= canvas.width || tileLeftDown.y < 0 || tileLeftDown.y >= canvas.height) {
+						tileLeftDown = -2;
 					} else {
-						if (tile1 < tile2) direction = -1;
-						if (tile2 < tile1) direction = 1;
+						tileLeftDown = findTileIndex(tileLeftDown.x, tileLeftDown.y);
 					}
 
-					let emptyTile = false;
+					let tileRightDown = {x: thisX + (gravity.y + gravity.x) * tileSize, y: thisY + (gravity.y - gravity.x) * tileSize};
+					if (tileRightDown.x < 0 || tileRightDown.x >= canvas.width || tileRightDown.y < 0 || tileRightDown.y >= canvas.height) {
+						tileRightDown = -2;
+					} else {
+						tileRightDown = findTileIndex(tileRightDown.x, tileRightDown.y);
+					}
 
-					if (gravity.x == 0) 
-						emptyTile = tiles.findIndex(object => (object.position.x == this.position.x + direction * tileSize) && (object.position.y == this.position.y)) == -1;
-					if (gravity.y == 0)
-						emptyTile = tiles.findIndex(object => (object.position.x == this.position.x) && (object.position.y == this.position.y + direction * tileSize)) == -1;
+					let left = (tileLeft == -1) && (tileLeftDown == -1);
+					let right = (tileRight == -1) && (tileRightDown == -1);
+					let movement = 0;
 
-					if (emptyTile) {
+					if (left || right) { // if hill goes down to the left or right
 
-						let floorTile = -1;
-						let leftTile = -1;
-						let rightTile = -1;
-
-						if (gravity.x == 0) {
-
-							floorTile = tiles.findIndex(object => (object.position.x == this.position.x) && (object.position.y == this.position.y + gravity.y * tileSize));
-							leftTile = tiles.findIndex(object => (object.position.x == this.position.x - tileSize) && (object.position.y == this.position.y));
-							rightTile = tiles.findIndex(object => (object.position.x == this.position.x + tileSize) && (object.position.y == this.position.y));
-
-							this.position.x = Math.max(0, Math.min(canvas.width - tileSize, this.position.x + direction * tileSize));
-						}
-						if (gravity.y == 0) {
-
-							floorTile = tiles.findIndex(object => (object.position.x == this.position.x + gravity.x * tileSize) && (object.position.y == this.position.y));
-							
-							leftTile = tiles.findIndex(object => (object.position.x == this.position.x) && (object.position.y == this.position.y - tileSize));
-							rightTile = tiles.findIndex(object => (object.position.x == this.position.x) && (object.position.y == this.position.y + tileSize));
-
-							this.position.y = Math.max(0, Math.min(canvas.height - tileSize, this.position.y + direction * tileSize));
-
+						if (left && right) {
+							movement = (Math.round(Math.random()) * 2 - 1);
+						} else if (left) {
+							movement = -1;
+						} else if (right) {
+							movement = 1;
 						}
 
-						if (floorTile >= 0)
-							tiles[floorTile].active = expirationTime;
-						if (leftTile >= 0)
-							tiles[leftTile].active = expirationTime;
-						if (rightTile >= 0)
-							tiles[rightTile].active = expirationTime;
+						if (gravity.x) this.velocity.y = movement * -gravity.x * this.slip;
+						if (gravity.y) this.velocity.x = movement * gravity.y * this.slip;
 
-						if (tiles.findIndex(object => (object.position.x == this.position.x + gravity.x * tileSize)
-		            					   	       && (object.position.y == this.position.y + gravity.y * tileSize)) == -1) {
+					} else {
 
-							this.position.x = Math.max(0, Math.min(canvas.width - tileSize, this.position.x + gravity.x * tileSize));
-							this.position.y = Math.max(0, Math.min(canvas.height - tileSize, this.position.y + gravity.y * tileSize));
+						// there is no hill that goes down to the left or right
+						// so decrease velocity
 
-						}
+						if (gravity.x) this.velocity.y += -Math.sign(this.velocity.y);
+						if (gravity.y) this.velocity.x += -Math.sign(this.velocity.x);
 
 					}
+
+				} else {
+
+					// we are on the border so decrease any horizontal velocity
+
+					if (gravity.x) this.velocity.y += -Math.sign(this.velocity.y);
+					if (gravity.y) this.velocity.x += -Math.sign(this.velocity.x);
+
+				}
+
+				if (this.velocity.y || this.velocity.x) {
+
+					if (tileLeft >= 0)
+						tiles[tileLeft].active = (tiles[tileLeft].useGravity) ? expirationTime : 0;
+
+					if (tileRight >= 0)
+						tiles[tileRight].active = (tiles[tileRight].useGravity) ? expirationTime : 0;
+
+					if (tileFloor >= 0)
+						tiles[tileFloor].active = (tiles[tileFloor].useGravity) ? expirationTime : 0;
+
 				}
 
 			} else {
 
-				this.position.x = Math.max(0, Math.min(canvas.width - tileSize, this.position.x + gravity.x * tileSize));
-				this.position.y = Math.max(0, Math.min(canvas.height - tileSize, this.position.y + gravity.y * tileSize));
+				// current tile is not on the ground, so set the velocity to gravity
+
+				if (gravity.x) {
+					this.velocity.x = gravity.x;
+					this.velocity.y = 0;
+				}
+				if (gravity.y) {
+					this.velocity.y = gravity.y;
+					this.velocity.x = 0;
+				}
+
+			}
+
+			if (tileLeft != -1) {
+
+				if (gravity.x == -1) this.velocity.y = Math.max(0, this.velocity.y);
+				if (gravity.x == 1) this.velocity.y = Math.min(0, this.velocity.y);
+
+				if (gravity.y == 1) this.velocity.x = Math.max(0, this.velocity.x);
+				if (gravity.y == -1) this.velocity.x = Math.min(0, this.velocity.x);
+
+			}
+
+			if (tileRight != -1) {
+
+				if (gravity.x == -1) this.velocity.y = Math.min(0, this.velocity.y);
+				if (gravity.x == 1) this.velocity.y = Math.max(0, this.velocity.y);
+
+				if (gravity.y == 1) this.velocity.x = Math.min(0, this.velocity.x);
+				if (gravity.y == -1) this.velocity.x = Math.max(0, this.velocity.x);
+
+			}
+
+			if (tileFloor != -1) {
+
+				if (gravity.x) this.velocity.x = 0;
+				if (gravity.y) this.velocity.y = 0;
+
+			}
+
+			if (this.position.x + Math.sign(this.velocity.x) * tileSize >= 0 && this.position.x + Math.sign(this.velocity.x) * tileSize <= canvas.width - tileSize) {
+				this.position.x += Math.sign(this.velocity.x) * tileSize;
+			} else {
+				this.velocity.x = 0;
+			}
+
+			if (this.position.y + Math.sign(this.velocity.y) * tileSize >= 0 && this.position.y + Math.sign(this.velocity.y) * tileSize <= canvas.height - tileSize) {
+				this.position.y += Math.sign(this.velocity.y) * tileSize;
+			} else {
+				this.velocity.y = 0;
+			}
+
+
+			tileFloor = {x: this.position.x + gravity.x * tileSize, y: this.position.y + gravity.y * tileSize};
+			if (tileFloor.x < 0 || tileFloor.x >= canvas.width || tileFloor.y < 0 || tileFloor.y >= canvas.height) {
+				tileFloor = -2;
+			} else {
+				tileFloor = findTileIndex(tileFloor.x, tileFloor.y);
+			}
+
+			if (tileFloor == -1) {
+
+				if (gravity.x) this.position.x += gravity.x * tileSize;
+				if (gravity.y) this.position.y += gravity.y * tileSize;
+
 
 			}
 
 			this.active = Math.max(0, this.active - 1);
 
-			if (!(this.position.x == posX && this.position.y == posY)) this.active = expirationTime;
+			if (!(this.position.x == thisX && this.position.y == thisY)) this.active = expirationTime;
 		}
 
 	}
+
+}
+
+function findTileIndex(positionX, positionY) {
+	return tiles.findIndex(object => (object.position.x == positionX) && (object.position.y == positionY));
 }
 
 let tiles = [];
@@ -328,8 +397,15 @@ function animate() {
 		tiles[i].drawTile();
 	}
 
+	// Draw brush cursor
+	c.strokeStyle = 'rgba(0,0,0,0.5)';
+	c.lineWidth = 1;
+	c.strokeRect(Math.floor(origin.x / tileSize) * tileSize - tileSize * brushSize, Math.floor(origin.y / tileSize) * tileSize - tileSize * brushSize,
+								(brushSize * 2 + 1) * tileSize, (brushSize * 2 + 1) * tileSize);
+
+
 	// Select crosshair color
-	c.fillStyle = 'rgba(160,160,160,0.4)'
+	c.fillStyle = 'rgba(160,160,160,0.4)';
 	if (erase) c.fillStyle = 'rgba(255,0,0,0.4)';
 
 	// Draw crosshair / arrow
@@ -339,11 +415,15 @@ function animate() {
 	c.lineTo(canvas.width / 2 + 20 * Math.sign(gravity.y), canvas.height / 2 - 20 * Math.sign(gravity.x));
 	c.fill();
 
+	// Draw all the text that is needed
+
 	c.font = "16px Arial";
 	c.fillStyle = 'black';
 	c.fillText("FPS: " + fps, 1234, 20);
-	if (debugDrawInactive)
-		c.fillText("Debug ON", 1217, 40);
+	if (debugMode){
+		c.fillText("Debug ON", 10, 80);
+		c.fillText("# of Tiles: " + tiles.length, 10, 100);
+	}
 
 	if (erase) {
 		c.fillText("Eraser", 10, 20);
@@ -379,7 +459,7 @@ function addTile() {
 	for (let i = Math.max(0, Math.floor(origin.x / tileSize) * tileSize - tileSize * brushSize); i <= Math.min(canvas.width - tileSize, Math.floor(origin.x / tileSize) * tileSize + tileSize * brushSize); i += tileSize) {
 		for (let j = Math.max(0, Math.floor(origin.y / tileSize) * tileSize - tileSize * brushSize); j <= Math.min(canvas.height - tileSize, Math.floor(origin.y / tileSize) * tileSize + tileSize * brushSize); j += tileSize) {
 		
-			tileIndex = tiles.findIndex(object => (object.position.x == i) && (object.position.y == j));
+			tileIndex = findTileIndex(i, j);
 
 			if (erase == true && tileIndex >= 0) {
 
@@ -391,7 +471,7 @@ function addTile() {
 
 				if (tileIndex >= 0) {
 					flag = false;
-					if ((tiles[tileIndex].name != "Block" && tileType.name == "Block") || (!tiles[tileIndex].killsFlame && tiles[tileIndex].name != "Block" && tileType.name == "Fire")) {
+					if ((tiles[tileIndex].name != "Stone" && tileType.name == "Stone") || (!tiles[tileIndex].killsFlame && tiles[tileIndex].name != "Stone" && tileType.name == "Fire")) {
 						flag = true;
 						tiles.splice(tileIndex, 1);
 					}
@@ -399,23 +479,14 @@ function addTile() {
 
 				if (flag) {
 
-					tiles.push(new Tile({
-
-						name: tileType.name,
-
+					pushTile({
+						tile: tileType,
 						position: {
 							x: i,
-							y: j
+							y: j,
 						},
-
-						color: tileType.color,
-						useGravity: tileType.useGravity,
-						slip: tileType.slip,
 						lifeSpan: tileType.lifeSpan,
-						isFlammable: tileType.isFlammable,
-						killsFlame: tileType.killsFlame,
-
-					}));
+					});
 
 				}
 
@@ -440,6 +511,8 @@ function addTiles() {
 
 			for(let i = 0; i < tiles.length; i++) {
 
+				if (!tiles[i].useGravity) continue;
+
 				if ((gravity.x == -1 && tiles[i].position.x >= limitX) || (gravity.x == 1 && tiles[i].position.x <= limitX)
 						|| (gravity.y == -1 && tiles[i].position.y >= limitY) || (gravity.y == 1 && tiles[i].position.y <= limitY)) {
 					
@@ -450,6 +523,26 @@ function addTiles() {
 
 		}
 	}
+}
+
+function pushTile({tile, position, lifeSpan}) {
+
+	tiles.push(new Tile({
+
+		name: tile.name,
+		color: tile.color,
+
+		position,
+		velocity: {x: 0, y: 0},
+		slip: tile.slip,
+
+		lifeSpan,
+		useGravity: tile.useGravity,
+		isFlammable: tile.isFlammable,
+		killsFlame: tile.killsFlame,
+
+	}));
+
 }
 
 document.addEventListener("keydown", function(event) {
@@ -478,12 +571,13 @@ document.addEventListener("keydown", function(event) {
 			tiles = [];
 			break;
 		case 'z': // debug: toggle inactive tile drawing
-			debugDrawInactive = (debugDrawInactive == true) ? false : true;
+			debugMode = (debugMode == true) ? false : true;
 			break;
 		case ' ': // toggle between brush and eraser
 			event.preventDefault();
-			erase = (erase == true) ? false : true;
+			erase = erase ? false : true;
 			break;
+
 		case '1':
 			erase = false;
 			tileType = tileTypes.grass;
@@ -505,13 +599,16 @@ document.addEventListener("keydown", function(event) {
 			brushSize = Math.max(0, brushSize - 1);
 			break;
 		case '=':
-			brushSize = Math.min(2, brushSize + 1);
+			brushSize = Math.min(maxBrushSize, brushSize + 1);
 			break;
 	}
 
 	// if gravity changed, make all tiles active again
 	if (!(gravX == gravity.x && gravY == gravity.y))
-		for(let i = 0; i < tiles.length; i++) tiles[i].active = expirationTime;
+		for(let i = 0; i < tiles.length; i++) {
+			if (!tiles[i].useGravity) continue;
+			tiles[i].active = expirationTime;
+		}
 });
 
 canvas.addEventListener("mousedown", function(event) {
