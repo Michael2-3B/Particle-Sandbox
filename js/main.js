@@ -19,6 +19,7 @@ const expirationTime = canvas.width / tileSize;
 let mouseDown = false;
 let erase = false;
 let debugMode = false;
+let activeTileCount = 0;
 
 const origin = {
 	x: 0,
@@ -39,6 +40,8 @@ const tileTypes = {
 		lifeSpan: -1,
 		isFlammable: true,
 		killsFlame: false,
+		explosionRadius: 0,
+		blastResistance: 2,
 	},
 
 	sand: {
@@ -49,27 +52,60 @@ const tileTypes = {
 		lifeSpan: -1,
 		isFlammable: false,
 		killsFlame: true,
+		explosionRadius: 0,
+		blastResistance: 1,
 	},
 
-	block: {
+	stone: {
 		name: "Stone",
-		useGravity: false,
-		color: {r: 90, g: 90, b: 100, a:1},
+		useGravity: true,
+		color: {r: 120, g: 120, b: 130, a: 1},
 		slip: 0,
 		lifeSpan: -1,
 		isFlammable: false,
 		killsFlame: false,
+		explosionRadius: 0,
+		blastResistance: 5,
+	},
+
+	block: {
+		name: "Block",
+		useGravity: false,
+		color: {r: 60, g: 60, b: 70, a: 1},
+		slip: 0,
+		lifeSpan: -1,
+		isFlammable: false,
+		killsFlame: false,
+		explosionRadius: 0,
+		blastResistance: 100
 	},
 
 	fire: {
 		name: "Fire",
 		useGravity: false,
-		color: {r: 245, g: 123, b: 0, a:1},
+		color: {r: 245, g: 123, b: 0, a: 1},
 		slip: 0,
 		lifeSpan: 20,
 		isFlammable: true,
 		killsFlame: false,
+		explosionRadius: 0,
+		blastResistance: 0,
 	},
+
+	// dynamite is not currently implemented, I am only defining it here
+
+	dynamite: {
+		name: "Dynamite",
+		useGravity: false,
+		color: {r: 128, g: 0, b: 0, a: 1},
+		slip: 0,
+		lifeSpan: -1,
+		isFlammable: true,
+		killsFlame: false,
+		explosionRadius: 4,
+		blastResistance: 0,
+	}
+
 };
 
 let tileType = tileTypes.grass;
@@ -109,6 +145,17 @@ class Tile {
 	update() {
 
 		if (this.lifeSpan > 0) {
+
+			let neighbor = calculateNeighboringTiles(this.position.x, this.position.y);
+
+			if (neighbor.tileLeft >= 0)
+				tiles[neighbor.tileLeft].active = (tiles[neighbor.tileLeft].useGravity) ? expirationTime : 0;
+			if (neighbor.tileRight >= 0)
+				tiles[neighbor.tileRight].active = (tiles[neighbor.tileRight].useGravity) ? expirationTime : 0;
+			if (neighbor.tileFloor >= 0)
+				tiles[neighbor.tileFloor].active = (tiles[neighbor.tileFloor].useGravity) ? expirationTime : 0;
+			if (neighbor.tileAbove >= 0)
+				tiles[neighbor.tileAbove].active = (tiles[neighbor.tileAbove].useGravity) ? expirationTime : 0;
 
 			// randomly moves fire particle with a bias upwards (opposite of gravity)
 
@@ -159,21 +206,6 @@ class Tile {
 
 						}
 
-						let limitX = Math.max(0, Math.min(canvas.width - tileSize, Math.floor(origin.x / tileSize) * tileSize + gravity.x * (tileSize * brushSize)));
-						let limitY = Math.max(0, Math.min(canvas.height - tileSize, Math.floor(origin.y / tileSize) * tileSize + gravity.y * (tileSize * brushSize)));
-
-						for(let i = 0; i < tiles.length; i++) {
-
-							if (!tiles[i].useGravity) continue;
-
-							if ((gravity.x == -1 && tiles[i].position.x >= limitX) || (gravity.x == 1 && tiles[i].position.x <= limitX)
-									|| (gravity.y == -1 && tiles[i].position.y >= limitY) || (gravity.y == 1 && tiles[i].position.y <= limitY)) {
-								
-								tiles[i].active = expirationTime;
-
-							}
-						}
-
 					}
 
 				} else {
@@ -198,56 +230,48 @@ class Tile {
 
 		} else {
 
-			let thisX = this.position.x;
-			let thisY = this.position.y;
+			this.active = Math.max(0, this.active - 1);
 
-			let tileLeft = {x: thisX - gravity.y * tileSize, y: thisY + gravity.x * tileSize};
-			if (tileLeft.x < 0 || tileLeft.x >= canvas.width || tileLeft.y < 0 || tileLeft.y >= canvas.height){
-				tileLeft = -2;
-			} else {
-				tileLeft = findTileIndex(tileLeft.x, tileLeft.y);
+			let neighbor = calculateNeighboringTiles(this.position.x, this.position.y);
+
+			if (neighbor.tileLeft != -1 && neighbor.tileRight != -1 && neighbor.tileFloor != -1 && neighbor.tileAbove != -1 && !this.velocity.x && !this.velocity.y) {
+				this.active = 0;
+				return;
 			}
 
-			let tileRight = {x: thisX + gravity.y * tileSize, y: thisY - gravity.x * tileSize};
-			if (tileRight.x < 0 || tileRight.x >= canvas.width || tileRight.y < 0 || tileRight.y >= canvas.height){
-				tileRight = -2;
-			} else {
-				tileRight = findTileIndex(tileRight.x, tileRight.y);
-			}
-
-			let tileFloor = {x: thisX + gravity.x * tileSize, y: thisY + gravity.y * tileSize};
-			if (tileFloor.x < 0 || tileFloor.x >= canvas.width || tileFloor.y < 0 || tileFloor.y >= canvas.height) {
-				tileFloor = -2;
-			} else {
-				tileFloor = findTileIndex(tileFloor.x, tileFloor.y);
-			}
+			let theTileName = "";
+			if (neighbor.tileFloor >= 0) theTileName = tiles[neighbor.tileFloor].name;
 
 			// if current tile is on the ground
-			if (tileFloor != -1) {
+			if (neighbor.tileFloor != -1 && theTileName != "Fire") {
+
+				// decrease horizontal velocity by 1
+				if (gravity.x) this.velocity.y += -Math.sign(this.velocity.y);
+				if (gravity.y) this.velocity.x += -Math.sign(this.velocity.x);
 
 				// cancel downward velocity
 				if (gravity.x) this.velocity.x = 0;
 				if (gravity.y) this.velocity.y = 0;
 
-				// current tile is on top of another tile
-				if (tileFloor >= 0) {
+				// current tile is on top of another tile, but not the border
+				if (neighbor.tileFloor >= 0) {
 
-					let tileLeftDown = {x: thisX - (gravity.y - gravity.x) * tileSize, y: thisY + (gravity.x + gravity.y) * tileSize};
+					let tileLeftDown = {x: this.position.x - (gravity.y - gravity.x) * tileSize, y: this.position.y + (gravity.x + gravity.y) * tileSize};
 					if (tileLeftDown.x < 0 || tileLeftDown.x >= canvas.width || tileLeftDown.y < 0 || tileLeftDown.y >= canvas.height) {
 						tileLeftDown = -2;
 					} else {
 						tileLeftDown = findTileIndex(tileLeftDown.x, tileLeftDown.y);
 					}
 
-					let tileRightDown = {x: thisX + (gravity.y + gravity.x) * tileSize, y: thisY + (gravity.y - gravity.x) * tileSize};
+					let tileRightDown = {x: this.position.x + (gravity.y + gravity.x) * tileSize, y: this.position.y + (gravity.y - gravity.x) * tileSize};
 					if (tileRightDown.x < 0 || tileRightDown.x >= canvas.width || tileRightDown.y < 0 || tileRightDown.y >= canvas.height) {
 						tileRightDown = -2;
 					} else {
 						tileRightDown = findTileIndex(tileRightDown.x, tileRightDown.y);
 					}
 
-					let left = (tileLeft == -1) && (tileLeftDown == -1);
-					let right = (tileRight == -1) && (tileRightDown == -1);
+					let left = (neighbor.tileLeft == -1) && (tileLeftDown == -1);
+					let right = (neighbor.tileRight == -1) && (tileRightDown == -1);
 					let movement = 0;
 
 					if (left || right) { // if hill goes down to the left or right
@@ -263,111 +287,126 @@ class Tile {
 						if (gravity.x) this.velocity.y = movement * -gravity.x * this.slip;
 						if (gravity.y) this.velocity.x = movement * gravity.y * this.slip;
 
-					} else {
-
-						// there is no hill that goes down to the left or right
-						// so decrease velocity
-
-						if (gravity.x) this.velocity.y += -Math.sign(this.velocity.y);
-						if (gravity.y) this.velocity.x += -Math.sign(this.velocity.x);
-
 					}
-
-				} else {
-
-					// we are on the border so decrease any horizontal velocity
-
-					if (gravity.x) this.velocity.y += -Math.sign(this.velocity.y);
-					if (gravity.y) this.velocity.x += -Math.sign(this.velocity.x);
-
-				}
-
-				if (this.velocity.y || this.velocity.x) {
-
-					if (tileLeft >= 0)
-						tiles[tileLeft].active = (tiles[tileLeft].useGravity) ? expirationTime : 0;
-
-					if (tileRight >= 0)
-						tiles[tileRight].active = (tiles[tileRight].useGravity) ? expirationTime : 0;
-
-					if (tileFloor >= 0)
-						tiles[tileFloor].active = (tiles[tileFloor].useGravity) ? expirationTime : 0;
 
 				}
 
 			} else {
 
-				// current tile is not on the ground, so set the velocity to gravity
+				// current tile is not on the ground, so set the downward velocity to gravity
 
 				if (gravity.x) {
 					this.velocity.x = gravity.x;
-					this.velocity.y = 0;
+					this.velocity.y = (Math.round(Math.random()) * 2 - 1) * this.slip;
 				}
 				if (gravity.y) {
 					this.velocity.y = gravity.y;
-					this.velocity.x = 0;
+					this.velocity.x = (Math.round(Math.random()) * 2 - 1) * this.slip;
 				}
 
 			}
 
-			if (tileLeft != -1) {
+			if (this.velocity.y || this.velocity.x) {
 
-				if (gravity.x == -1) this.velocity.y = Math.max(0, this.velocity.y);
-				if (gravity.x == 1) this.velocity.y = Math.min(0, this.velocity.y);
+				this.active = expirationTime;
 
-				if (gravity.y == 1) this.velocity.x = Math.max(0, this.velocity.x);
-				if (gravity.y == -1) this.velocity.x = Math.min(0, this.velocity.x);
+				if (neighbor.tileLeft >= 0)
+					tiles[neighbor.tileLeft].active = (tiles[neighbor.tileLeft].useGravity) ? expirationTime : 0;
 
-			}
+				if (neighbor.tileRight >= 0)
+					tiles[neighbor.tileRight].active = (tiles[neighbor.tileRight].useGravity) ? expirationTime : 0;
 
-			if (tileRight != -1) {
+				if (neighbor.tileFloor >= 0)
+					tiles[neighbor.tileFloor].active = (tiles[neighbor.tileFloor].useGravity) ? expirationTime : 0;
 
-				if (gravity.x == -1) this.velocity.y = Math.min(0, this.velocity.y);
-				if (gravity.x == 1) this.velocity.y = Math.max(0, this.velocity.y);
-
-				if (gravity.y == 1) this.velocity.x = Math.min(0, this.velocity.x);
-				if (gravity.y == -1) this.velocity.x = Math.max(0, this.velocity.x);
+				if (neighbor.tileAbove >= 0)
+					tiles[neighbor.tileAbove].active = (tiles[neighbor.tileAbove].useGravity) ? expirationTime : 0;
 
 			}
 
-			if (tileFloor != -1) {
+			if (neighbor.tileLeft != -1) {
 
-				if (gravity.x) this.velocity.x = 0;
-				if (gravity.y) this.velocity.y = 0;
+				if (Math.sign(this.velocity.x) == -gravity.y) this.velocity.x = -this.velocity.x;
+				if (Math.sign(this.velocity.y) == gravity.x) this.velocity.y = -this.velocity.y;
+
+				if (neighbor.tileRight != -1) {
+
+					if (gravity.x) this.velocity.y = 0;
+					if (gravity.y) this.velocity.x = 0;
+
+				}
 
 			}
 
-			if (this.position.x + Math.sign(this.velocity.x) * tileSize >= 0 && this.position.x + Math.sign(this.velocity.x) * tileSize <= canvas.width - tileSize) {
-				this.position.x += Math.sign(this.velocity.x) * tileSize;
+			if (neighbor.tileRight != -1) {
+
+				if (Math.sign(this.velocity.x) == gravity.y) this.velocity.x = -this.velocity.x;
+				if (Math.sign(this.velocity.y) == -gravity.x) this.velocity.y = -this.velocity.y;
+
+				if (neighbor.tileLeft != -1) {
+
+					if (gravity.x) this.velocity.y = 0;
+					if (gravity.y) this.velocity.x = 0;
+
+				}
+
+			}
+
+			theTileName = "";
+			if (neighbor.tileFloor >= 0) theTileName = tiles[neighbor.tileFloor].name;
+
+			if (gravity.x || (gravity.y && neighbor.tileFloor != -1 && theTileName != "Fire")) {
+					if (this.position.x + Math.sign(this.velocity.x) * tileSize >= 0 && this.position.x + Math.sign(this.velocity.x) * tileSize <= canvas.width - tileSize)
+						this.position.x += Math.sign(this.velocity.x) * tileSize;
+			}
+
+			if (gravity.y || (gravity.x && neighbor.tileFloor != -1 && theTileName != "Fire")) {
+					if (this.position.y + Math.sign(this.velocity.y) * tileSize >= 0 && this.position.y + Math.sign(this.velocity.y) * tileSize <= canvas.height - tileSize)
+						this.position.y += Math.sign(this.velocity.y) * tileSize;
+			}
+
+			if (theTileName == "Fire") {
+				if (this.isFlammable) {
+					tiles[neighbor.tileFloor].position.y = Math.max(0, Math.min(canvas.height - tileSize, tiles[neighbor.tileFloor].position.y - gravity.y * tileSize));
+					tiles[neighbor.tileFloor].position.x = Math.max(0, Math.min(canvas.width - tileSize, tiles[neighbor.tileFloor].position.x - gravity.x * tileSize));
+				} else {
+					tiles.splice(neighbor.tileFloor, 1);
+				}
+			}
+
+			neighbor.tileFloor = {x: this.position.x + gravity.x * tileSize, y: this.position.y + gravity.y * tileSize};
+			if (neighbor.tileFloor.x < 0 || neighbor.tileFloor.x >= canvas.width || neighbor.tileFloor.y < 0 || neighbor.tileFloor.y >= canvas.height) {
+				neighbor.tileFloor = -2;
 			} else {
-				this.velocity.x = 0;
+				neighbor.tileFloor = findTileIndex(neighbor.tileFloor.x, neighbor.tileFloor.y);
 			}
 
-			if (this.position.y + Math.sign(this.velocity.y) * tileSize >= 0 && this.position.y + Math.sign(this.velocity.y) * tileSize <= canvas.height - tileSize) {
-				this.position.y += Math.sign(this.velocity.y) * tileSize;
-			} else {
-				this.velocity.y = 0;
+			theTileName = "";
+			if (neighbor.tileFloor >= 0) theTileName = tiles[neighbor.tileFloor].name;
+
+			if (neighbor.tileFloor == -1 || theTileName == "Fire") {
+
+				if (gravity.x) {
+					this.position.x += gravity.x * tileSize;
+					this.velocity.y = (Math.round(Math.random()) * 2 - 1) * this.slip;
+				}
+
+				if (gravity.y) {
+					this.position.y += gravity.y * tileSize;
+					this.velocity.x = (Math.round(Math.random()) * 2 - 1) * this.slip;
+				}
+
+				if (theTileName == "Fire") {
+					if (this.isFlammable) {
+						tiles[neighbor.tileFloor].position.y = Math.max(0, Math.min(canvas.height - tileSize, tiles[neighbor.tileFloor].position.y - gravity.y * tileSize));
+						tiles[neighbor.tileFloor].position.x = Math.max(0, Math.min(canvas.width - tileSize, tiles[neighbor.tileFloor].position.x - gravity.x * tileSize));
+					} else {
+						tiles.splice(neighbor.tileFloor, 1);
+					}
+				}
+
 			}
 
-
-			tileFloor = {x: this.position.x + gravity.x * tileSize, y: this.position.y + gravity.y * tileSize};
-			if (tileFloor.x < 0 || tileFloor.x >= canvas.width || tileFloor.y < 0 || tileFloor.y >= canvas.height) {
-				tileFloor = -2;
-			} else {
-				tileFloor = findTileIndex(tileFloor.x, tileFloor.y);
-			}
-
-			if (tileFloor == -1) {
-
-				if (gravity.x) this.position.x += gravity.x * tileSize;
-				if (gravity.y) this.position.y += gravity.y * tileSize;
-
-
-			}
-
-			this.active = Math.max(0, this.active - 1);
-
-			if (!(this.position.x == thisX && this.position.y == thisY)) this.active = expirationTime;
 		}
 
 	}
@@ -376,6 +415,40 @@ class Tile {
 
 function findTileIndex(positionX, positionY) {
 	return tiles.findIndex(object => (object.position.x == positionX) && (object.position.y == positionY));
+}
+
+function calculateNeighboringTiles(thisX, thisY) {
+
+	let tileLeft = {x: thisX - gravity.y * tileSize, y: thisY + gravity.x * tileSize};
+	if (tileLeft.x < 0 || tileLeft.x >= canvas.width || tileLeft.y < 0 || tileLeft.y >= canvas.height){
+		tileLeft = -2;
+	} else {
+		tileLeft = findTileIndex(tileLeft.x, tileLeft.y);
+	}
+
+	let tileRight = {x: thisX + gravity.y * tileSize, y: thisY - gravity.x * tileSize};
+	if (tileRight.x < 0 || tileRight.x >= canvas.width || tileRight.y < 0 || tileRight.y >= canvas.height){
+		tileRight = -2;
+	} else {
+		tileRight = findTileIndex(tileRight.x, tileRight.y);
+	}
+
+	let tileFloor = {x: thisX + gravity.x * tileSize, y: thisY + gravity.y * tileSize};
+	if (tileFloor.x < 0 || tileFloor.x >= canvas.width || tileFloor.y < 0 || tileFloor.y >= canvas.height) {
+		tileFloor = -2;
+	} else {
+		tileFloor = findTileIndex(tileFloor.x, tileFloor.y);
+	}
+
+	let tileAbove = {x: thisX - gravity.x * tileSize, y: thisY - gravity.y * tileSize};
+	if (tileAbove.x < 0 || tileAbove.x >= canvas.width || tileAbove.y < 0 || tileAbove.y >= canvas.height) {
+		tileAbove = -2;
+	} else {
+		tileAbove = findTileIndex(tileAbove.x, tileAbove.y);
+	}
+
+	return {tileLeft, tileRight, tileFloor, tileAbove};
+
 }
 
 let tiles = [];
@@ -390,10 +463,13 @@ function animate() {
 	c.fillRect(0, 0, canvas.width, canvas.height);
 
 	// add any tiles if needed
-	addTiles();
+	if (mouseDown) addTiles();
+
+	activeTileCount = 0;
 
 	// Draw tiles
 	for (let i = 0; i < tiles.length; i++) {
+		if (tiles[i].active) activeTileCount++;
 		tiles[i].drawTile();
 	}
 
@@ -406,7 +482,7 @@ function animate() {
 
 	// Select crosshair color
 	c.fillStyle = 'rgba(160,160,160,0.4)';
-	if (erase) c.fillStyle = 'rgba(255,0,0,0.4)';
+	if (erase) c.fillStyle = 'rgba(200,0,0,0.4)';
 
 	// Draw crosshair / arrow
 	c.beginPath();
@@ -422,7 +498,7 @@ function animate() {
 	c.fillText("FPS: " + fps, 1234, 20);
 	if (debugMode){
 		c.fillText("Debug ON", 10, 80);
-		c.fillText("# of Tiles: " + tiles.length, 10, 100);
+		c.fillText("Active Tiles: " + activeTileCount, 10, 100);
 	}
 
 	if (erase) {
@@ -447,7 +523,7 @@ function updateFPS() {
 
 }
 
-function addTile() {
+function addTiles() {
 
 	// add a certain number of tiles based on brushSize
 	// brushSize of 0 means 1 tile (1x1)
@@ -465,13 +541,24 @@ function addTile() {
 
 				tiles.splice(tileIndex, 1);
 
+				let neighbor = calculateNeighboringTiles(i, j);
+
+				if (neighbor.tileLeft >= 0)
+					tiles[neighbor.tileLeft].active = (tiles[neighbor.tileLeft].useGravity) ? expirationTime : 0;
+				if (neighbor.tileRight >= 0)
+					tiles[neighbor.tileRight].active = (tiles[neighbor.tileRight].useGravity) ? expirationTime : 0;
+				if (neighbor.tileFloor >= 0)
+					tiles[neighbor.tileFloor].active = (tiles[neighbor.tileFloor].useGravity) ? expirationTime : 0;
+				if (neighbor.tileAbove >= 0)
+					tiles[neighbor.tileAbove].active = (tiles[neighbor.tileAbove].useGravity) ? expirationTime : 0;
+
 			} else if (erase == false) {
 
 				let flag = true;
 
 				if (tileIndex >= 0) {
 					flag = false;
-					if ((tiles[tileIndex].name != "Stone" && tileType.name == "Stone") || (!tiles[tileIndex].killsFlame && tiles[tileIndex].name != "Stone" && tileType.name == "Fire")) {
+					if ((tiles[tileIndex].name != "Block" && tileType.name == "Block") || (!tiles[tileIndex].killsFlame && tiles[tileIndex].name != "Block" && tiles[tileIndex].name != "Stone" && tileType.name == "Fire")) {
 						flag = true;
 						tiles.splice(tileIndex, 1);
 					}
@@ -495,34 +582,6 @@ function addTile() {
 		}
 	}
 	
-}
-
-function addTiles() {
-
-	// Decide whether we should add or remove tiles		
-	if (mouseDown) {
-
-		addTile();
-
-		if (erase) {
-
-			let limitX = Math.max(0, Math.min(canvas.width - tileSize, Math.floor(origin.x / tileSize) * tileSize + gravity.x * (tileSize * brushSize)));
-			let limitY = Math.max(0, Math.min(canvas.height - tileSize, Math.floor(origin.y / tileSize) * tileSize + gravity.y * (tileSize * brushSize)));
-
-			for(let i = 0; i < tiles.length; i++) {
-
-				if (!tiles[i].useGravity) continue;
-
-				if ((gravity.x == -1 && tiles[i].position.x >= limitX) || (gravity.x == 1 && tiles[i].position.x <= limitX)
-						|| (gravity.y == -1 && tiles[i].position.y >= limitY) || (gravity.y == 1 && tiles[i].position.y <= limitY)) {
-					
-					tiles[i].active = expirationTime;
-
-				}
-			}
-
-		}
-	}
 }
 
 function pushTile({tile, position, lifeSpan}) {
@@ -588,9 +647,13 @@ document.addEventListener("keydown", function(event) {
 			break;
 		case '3':
 			erase = false;
-			tileType = tileTypes.block;
+			tileType = tileTypes.stone;
 			break;
 		case '4':
+			erase = false;
+			tileType = tileTypes.block;
+			break;
+		case '5':
 			erase = false;
 			tileType = tileTypes.fire;
 			break;
@@ -603,11 +666,16 @@ document.addEventListener("keydown", function(event) {
 			break;
 	}
 
-	// if gravity changed, make all tiles active again
+	// if gravity changed, make tiles active again
 	if (!(gravX == gravity.x && gravY == gravity.y))
 		for(let i = 0; i < tiles.length; i++) {
 			if (!tiles[i].useGravity) continue;
-			tiles[i].active = expirationTime;
+
+			let neighbor = calculateNeighboringTiles(tiles[i].position.x, tiles[i].position.y);
+
+			if (neighbor.tileLeft == -1 || neighbor.tileRight == -1 || neighbor.tileFloor == -1 || neighbor.tileAbove == -1)
+				tiles[i].active = expirationTime;
+
 		}
 });
 
